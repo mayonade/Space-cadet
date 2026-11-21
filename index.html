@@ -102,7 +102,15 @@ canvas { display: block; border-radius: 10px; }
   color: var(--void); background: var(--lamp); border: 0; border-radius: 999px;
   padding: 14px 30px; cursor: pointer; box-shadow: 0 0 24px color-mix(in srgb, var(--lamp) 55%, transparent);
 }
-.go:focus-visible, .icon-btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.nudge {
+  position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%);
+  width: 64px; height: 44px; border-radius: 22px;
+  font: inherit; font-weight: 700; font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink); background: color-mix(in srgb, var(--deck) 82%, transparent);
+  border: 1px solid var(--rail); cursor: pointer;
+}
+.nudge:active { background: var(--rail); color: var(--void); }
+.go:focus-visible, .icon-btn:focus-visible, .nudge:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 </style>
 
 <div class="rail">
@@ -118,14 +126,15 @@ canvas { display: block; border-radius: 10px; }
 <div class="ticker" id="ticker" aria-live="polite">Three balls. Zero dignity.</div>
 <div class="stage" id="stage">
   <canvas id="table" aria-label="Pinball table"></canvas>
+  <button class="nudge" id="nudge" type="button" hidden>Bump</button>
   <div class="overlay" id="overlay">
     <div class="card">
       <h1 id="ovTitle">Nebula Drift<span>Pinball</span></h1>
       <div class="final" id="ovScore" hidden>0</div>
       <div class="best" id="ovBest" hidden></div>
       <p class="tag" id="ovTag">Bonk the jelly aliens. Bother the space cow. Nibble the cheese moon.</p>
-      <p id="ovText">Tap the left or right side of the screen to flip. Hold the right side to pull the launcher, then let go.</p>
-      <p class="keys">Keyboard: ← → flip, Space launches.</p>
+      <p id="ovText">Tap the left or right side of the screen to flip. Hold the right side to pull the launcher, then let go. Bump shoves the table; three quick shoves and it tilts.</p>
+      <p class="keys">Keyboard: ← → flip, Space launches, ↑ bumps.</p>
       <button class="go" id="go" type="button">Start game</button>
     </div>
   </div>
@@ -182,6 +191,35 @@ addPoly([[10, 266], [24, 278]]); addPoly([[24, 350], [10, 362]]);
 addPoly([[362, 266], [348, 278]]); addPoly([[348, 350], [362, 362]]);
 addPoly([[10, 395], [32, 440], [10, 462]]);
 addPoly([[362, 395], [340, 440], [362, 462]]);
+for (const cx of [112, mx(112)]) { addPoly([[cx - 16, 408], [cx - 16, 376]]); addPoly([[cx + 16, 376], [cx + 16, 408]]); }   // ramp mouths
+
+/* ---------- ramps: the ball leaves the playfield and rides a rail overhead ---------- */
+function makeRail(id, ctrl) {
+  const pts = [], n = ctrl.length, cr = (a, b, c, d, t) => 0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t * t + (3 * b - a - 3 * c + d) * t * t * t);
+  for (let i = 0; i < n - 1; i++) {
+    const p0 = ctrl[Math.max(i - 1, 0)], p1 = ctrl[i], p2 = ctrl[i + 1], p3 = ctrl[Math.min(i + 2, n - 1)];
+    for (let j = 0; j < 8; j++) pts.push([0, 1, 2].map(k => cr(p0[k], p1[k], p2[k], p3[k], j / 8)));
+  }
+  pts.push(ctrl[n - 1].slice());
+  const len = [0]; let top = 0;
+  for (let i = 1; i < pts.length; i++) { len.push(len[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])); if (pts[i][2] > pts[top][2] + 0.01) top = i; }
+  const r = { id, pts, len, total: len[len.length - 1], crest: len[top], mouth: ctrl[0][0], hoops: [] };
+  for (let s = r.crest + 8; s < r.total - 4; s += 20) r.hoops.push(s);
+  return r;
+}
+const RAMP_XY = [[112, 404], [108, 372], [104, 346], [120, 331], [152, 336], [186, 350], [240, 374], [290, 412], [315, 456], [321, 500], [321, 530]];
+const rails = [
+  makeRail(0, RAMP_XY.map((p, i) => [p[0], p[1], [0, 17, 34, 38, 38, 38, 36, 31, 25, 16, 7][i]])),
+  makeRail(1, RAMP_XY.map((p, i) => [mx(p[0]), p[1], [0, 17, 34, 44, 48, 48, 44, 36, 27, 16, 7][i]])),
+];
+const RA = { x: 0, y: 0, z: 0, tx: 0, ty: 0, tz: 0 };
+function railAt(r, s) {
+  s = Math.max(0, Math.min(r.total - 0.001, s));
+  let i = 0; while (i < r.len.length - 2 && r.len[i + 1] < s) i++;
+  const a = r.pts[i], b = r.pts[i + 1], L = (r.len[i + 1] - r.len[i]) || 1, t = (s - r.len[i]) / L;
+  RA.x = a[0] + (b[0] - a[0]) * t; RA.y = a[1] + (b[1] - a[1]) * t; RA.z = a[2] + (b[2] - a[2]) * t;
+  RA.tx = (b[0] - a[0]) / L; RA.ty = (b[1] - a[1]) / L; RA.tz = (b[2] - a[2]) / L;
+}
 const gate = { x1: 362, y1: 178, x2: 386, y2: 160, e: 0.3, h: 8 };
 
 const targets = [];
@@ -214,13 +252,22 @@ const QUIPS = {
   cow: ['Moo? +1,500', 'Cow bonked +1,500', 'Space beef tenderised +1,500', 'She\'s fine. She has a helmet +1,500'],
   cheese: ['Cheese moon nibbled', 'Mmm. Gouda orbit', 'Crumbs in zero gravity'],
   sling: ['Pew!', 'Zoink!', 'Spang!'],
+  ramp: ['Wheee! +3,000', 'Scenic route +3,000', 'Mind the gap +3,000', 'Rollercoaster! +3,000'],
 };
+const MISSIONS = [
+  { name: 'Cattle Call', steps: [['cow', 3, 'bonk the cow'], ['ramp', 1, 'herd her up a ramp']] },
+  { name: 'Jelly Roll', steps: [['bumper', 10, 'squish jellies'], ['saucer', 1, 'report to saucer']] },
+  { name: 'Rush Hour', steps: [['rampL', 1, 'take left ramp'], ['rampR', 1, 'take right ramp'], ['ramp', 2, 'any ramps']] },
+  { name: 'Cheese Run', steps: [['cheese', 2, 'nibble the moon'], ['saucer', 1, 'deliver to saucer']] },
+  { name: 'Paperwork', steps: [['target', 5, 'stamp targets'], ['lane', 3, 'file in top lanes']] },
+];
 
 /* ---------- game state ---------- */
 let state = 'attract';          // attract | play | over
 let ball = null, score = 0, ballNo = 0, mult = 1, bumperHits = 0, goals = 0, rank = 0;
 let saveT = 0, charge = 0, nextBallT = 0, tickerT = 0, best = 0, clock = 0, gasp = 0;
 let stuckT = 0, stuckX = 0, stuckY = 0;
+let offer = 0, mission = null, kick = true, tilt = false, shake = 0, lastRamp = -1, lastRampT = -99, nudges = [];
 const sparks = [], trail = [];
 const input = { L: false, R: false, launch: false };
 try { best = +localStorage.getItem('nebula-drift-best') || 0; } catch (e) {}
@@ -252,6 +299,8 @@ const sfx = {
   pew: () => sweep('sawtooth', [[1400, 0], [220, 0.13]], 0.14, 0.04),
   target: () => { tone(880, 0.07, 'square', 0.05); tone(1320, 0.1, 'square', 0.05, 0, 0.06); },
   lane: () => tone(1180, 0.12, 'sine', 0.07),
+  ramp: () => sweep('triangle', [[280, 0], [980, 0.4]], 0.45, 0.08),
+  thud: () => tone(70, 0.14, 'triangle', 0.14),
   wall: () => tone(120, 0.03, 'triangle', 0.04),
   launch: () => sweep('sine', [[260, 0], [1900, 0.45]], 0.5, 0.09),            // slide whistle up
   whistleDown: () => sweep('sine', [[1500, 0], [240, 0.5]], 0.55, 0.08),
@@ -275,26 +324,62 @@ function say(text, dur = 2.2) { elTicker.textContent = text; tickerT = dur; }
 function add(points) { score += points * mult; }
 
 /* ---------- rules ---------- */
-function goal(label, bonus) {
-  goals++; score += bonus; sfx.fanfare(); buzz(30);
-  if (goals % 6 === 0 && rank < RANKS.length - 1) {
+function idleText() {
+  if (tilt) return 'Tilt. The cabinet is sulking';
+  if (!mission) return 'Mission: ' + MISSIONS[offer].name + '? Feed saucer';
+  const st = mission.m.steps[mission.step];
+  return mission.m.name + ': ' + st[2] + ' ' + mission.n + '/' + st[1];
+}
+// ev: something happened on the table that a mission step might be waiting for
+function ev(type) {
+  if (!mission) return;
+  const st = mission.m.steps[mission.step];
+  if (st[0] !== type && !(st[0] === 'ramp' && (type === 'rampL' || type === 'rampR'))) return;
+  if (++mission.n < st[1]) { say(idleText(), 1.6); return; }
+  mission.step++; mission.n = 0;
+  if (mission.step < mission.m.steps.length) { sfx.target(); say('Next: ' + mission.m.steps[mission.step][2], 2.4); return; }
+  const name = mission.m.name; mission = null; offer = (offer + 1) % MISSIONS.length;
+  goal('Mission complete: ' + name + ' +30,000', 30000, 2);
+}
+function rampShot(id) {
+  const combo = clock - lastRampT < 7 && lastRamp !== id;
+  add(combo ? 6000 : 3000); say(combo ? 'Ramp combo! Show-off +6,000' : pick(QUIPS.ramp), 1.6);
+  lastRamp = id; lastRampT = clock; ev(id ? 'rampR' : 'rampL');
+}
+function nudge() {
+  if (state !== 'play' || tilt) return;
+  nudges = nudges.filter(t => clock - t < 2.5); nudges.push(clock);
+  shake = 0.2; buzz(20); sfx.thud();
+  if (nudges.length >= 3) {
+    tilt = true; saveT = 0; kick = false; flippers.forEach(f => f.on = false);
+    sfx.trombone(); say('TILT! The cabinet is sulking', 4); return;
+  }
+  const b = ball;
+  if (b && !b.rail && !(b.held > 0) && !b.inLane) { b.vy -= 230; b.vx += (Math.random() - 0.5) * 260; }
+}
+function goal(label, bonus, n = 1) {
+  goals += n; score += bonus; sfx.fanfare(); buzz(30);
+  if (Math.floor(goals / 6) > Math.floor((goals - n) / 6) && rank < RANKS.length - 1) {
     rank++; score += 25000;
     say('Promoted to ' + RANKS[rank] + '! +25,000', 3.4);
   } else say(label, 2.6);
 }
 function hitLane(l) {
-  sfx.lane(); add(300);
+  sfx.lane(); add(300); ev('lane');
   if (!l.lit) {
     l.lit = true;
     if (lanes.every(x => x.lit)) {
       lanes.forEach(x => x.lit = false);
       if (mult < 6) mult++;
-      goal('Lanes clear. Bonus ×' + mult + '. Fancy!', 2000);
+      kick = true;
+      goal('Lanes clear. Bonus ×' + mult + ', trampoline on', 2000);
     }
   }
 }
 function hitTarget(t) {
   t.flash = 1; sfx.target(); add(500);
+  if (mission) ev('target');
+  else if (t.side === 1) { offer = (offer + 1) % MISSIONS.length; say('Mission offer: ' + MISSIONS[offer].name, 1.8); }
   if (!t.lit) {
     t.lit = true;
     const bank = targets.filter(x => x.side === t.side);
@@ -308,20 +393,22 @@ function hitTarget(t) {
 function hitCow() {
   cow.spin = 1.5; cow.count++; sfx.moo(); buzz(25); add(1500);
   if (cow.count % 4 === 0) goal('Herd thoroughly bothered', 4000); else say(pick(QUIPS.cow), 1.8);
+  ev('cow');
 }
 function rotateLanes(dir) {
   const v = lanes.map(l => l.lit);
   lanes.forEach((l, i) => l.lit = v[(i + dir + 3) % 3]);
 }
 function newBall(auto) {
-  ball = { x: 376, y: 668, z: 0, vx: 0, vy: 0, inLane: true, held: 0, auto: auto ? 0.7 : 0, saved: !!auto };
-  trail.length = 0; charge = 0; stuckT = 0;
+  ball = { x: 376, y: 668, z: 0, vx: 0, vy: 0, inLane: true, held: 0, auto: auto ? 0.7 : 0, saved: !!auto, rail: null };
+  trail.length = 0; charge = 0; stuckT = 0; tilt = false; nudges = []; syncPointers();
   if (!auto) say('Hold the right side, then let go', 60);
 }
 function newGame() {
   score = 0; ballNo = 1; mult = 1; bumperHits = 0; goals = 0; rank = 0; saveT = 0; nextBallT = 0; cow.count = 0;
   lanes.forEach(l => l.lit = false); targets.forEach(t => t.lit = false); well.lit = false;
-  state = 'play'; $('overlay').hidden = true;
+  mission = null; offer = 0; kick = true; tilt = false; lastRampT = -99;
+  state = 'play'; $('overlay').hidden = true; $('nudge').hidden = false;
   newBall(false); hud();
 }
 function launch(power) {
@@ -332,7 +419,7 @@ function drain() {
   ball = null; trail.length = 0;
   if (saveT > 0) { saveT = 0; say('Bubble wrap saved your ball', 2); sfx.boing(); newBall(true); return; }
   sfx.trombone(); buzz(60); gasp = 1.6;
-  const bonus = bumperHits * 50 * mult;
+  const bonus = tilt ? 0 : bumperHits * 50 * mult;
   score += bonus;
   say(pick(QUIPS.drain) + (bonus ? ' · bonus +' + bonus.toLocaleString('en-US') : ''), 2.6);
   bumperHits = 0; mult = 1; ballNo++; nextBallT = 2;
@@ -347,7 +434,7 @@ function gameOver() {
   $('ovBest').hidden = false; $('ovBest').textContent = record ? 'New best score' : 'Best ' + best.toLocaleString('en-US');
   $('ovText').hidden = true; $('ovTag').textContent = cow.count ? 'Cows bothered: ' + cow.count : 'The cow remains unbothered.';
   $('go').textContent = 'Play again';
-  $('overlay').hidden = false;
+  $('overlay').hidden = false; $('nudge').hidden = true;
   say('Game over, ' + RANKS[rank], 60); hud();
 }
 
@@ -392,6 +479,23 @@ function step(dt) {
   }
   const b = ball;
   if (!b || b.held > 0) return;
+  if (b.rail) {
+    const q = b.rail, r = q.r;
+    railAt(r, q.s);
+    q.v += (G * RA.ty - 4000 * RA.tz) * dt; q.v *= 1 - 0.25 * dt;
+    if (q.s > r.crest && q.v < 150) q.v = 150;
+    if (q.v > 760) q.v = 760;
+    q.s += q.v * dt;
+    if (q.s >= r.total) {            // off the far end, into the return lane
+      railAt(r, r.total); const v = Math.min(q.v, 240);
+      b.rail = null; b.x = RA.x; b.y = RA.y; b.z = 0; b.vx = RA.tx * v; b.vy = RA.ty * v + 60; rampShot(r.id);
+    } else if (q.s <= 0) {           // not enough oomph: rolls back out of the mouth
+      railAt(r, 0); const v = Math.max(120, -q.v);
+      b.rail = null; b.x = RA.x; b.y = RA.y + 6; b.z = 0; b.vx = -RA.tx * v; b.vy = -RA.ty * v;
+      if (tickerT < 0.5) say('So close. Hit it harder', 1.4);
+    } else { railAt(r, q.s); b.x = RA.x; b.y = RA.y; b.z = RA.z; }
+    return;
+  }
   b.vy += G * dt;
   b.x += b.vx * dt; b.y += b.vy * dt;
 
@@ -418,6 +522,7 @@ function step(dt) {
     p.flash = 1; bumperHits++; add(100); sfx.boing(); buzz(10);
     spark(b.x - nx * BR, b.y - ny * BR, 'hsl(' + p.hue + ',100%,75%)', 6);
     if (Math.random() < 0.3 && tickerT < 0.6) say(pick(QUIPS.bumper), 1);
+    ev('bumper');
   }
 
   for (const f of flippers) {
@@ -449,7 +554,7 @@ function step(dt) {
   }
   {
     const inside = Math.hypot(b.x - beacon.x, b.y - beacon.y) < 17;
-    if (inside && !beacon.inside) { beacon.flash = 1; add(750); sfx.munch(); say(pick(QUIPS.cheese), 1.4); }
+    if (inside && !beacon.inside) { beacon.flash = 1; add(750); sfx.munch(); say(pick(QUIPS.cheese), 1.4); ev('cheese'); }
     beacon.inside = inside;
   }
   if (cow.spin <= 0 && Math.hypot(b.x - cow.x, b.y - cow.y) < 19) hitCow();
@@ -457,6 +562,14 @@ function step(dt) {
     b.held = 1.1; b.x = well.x; b.y = well.y; b.vx = b.vy = 0; sfx.ufo(); buzz(20);
     if (well.lit) { well.lit = false; score += 20000; say('Probing complete. Jackpot +20,000', 2.8); }
     else { add(2500); say('Ball abducted for science', 1.6); }
+    if (!mission) { mission = { m: MISSIONS[offer], step: 0, n: 0 }; say('Mission accepted: ' + mission.m.name, 2.6); }
+    else ev('saucer');
+  }
+  for (const r of rails) if (Math.abs(b.x - r.mouth) < 15 && b.y < 404 && b.y > 380 && b.vy < -80) {
+    b.rail = { r, s: 404 - b.y, v: Math.hypot(b.vx, b.vy) }; trail.length = 0; sfx.ramp(); break;
+  }
+  if (kick && b.x < 40 && b.y > 610 && b.y < 690 && b.vy > 0) {
+    kick = false; b.vy = -1150; b.vx = 0; sfx.boing(); buzz(30); say('Emergency trampoline!', 1.8);
   }
   if (b.y > H + 40) drain();
 }
@@ -464,7 +577,8 @@ function step(dt) {
 /* ---------- per-frame update ---------- */
 function update(dt) {
   clock += dt;
-  if (tickerT > 0) { tickerT -= dt; if (tickerT <= 0 && state === 'play') elTicker.textContent = RANKS[rank] + ' · ' + (goals % 6) + '/6 to promotion'; }
+  if (tickerT > 0) { tickerT -= dt; if (tickerT <= 0 && state === 'play') elTicker.textContent = idleText(); }
+  if (shake > 0) { shake = Math.max(0, shake - dt); cv.style.transform = shake > 0 && !reduceMotion ? 'translate(' + (Math.random() - 0.5) * 10 + 'px,' + (-shake * 40) + 'px)' : ''; }
   for (const p of bumpers) p.flash = Math.max(0, p.flash - dt * 4);
   for (const t of targets) t.flash = Math.max(0, t.flash - dt * 4);
   beacon.flash = Math.max(0, beacon.flash - dt * 2.5);
@@ -497,6 +611,7 @@ function update(dt) {
   else if (charge > 0) { if (ready) launch(charge); charge = 0; }
 
   // safety net: a ball that has not moved for a while with no flipper held gets a nudge
+  if (b.rail) { stuckT = 0; return; }
   if (!b.inLane && !flippers[0].on && !flippers[1].on) {
     if (Math.hypot(b.x - stuckX, b.y - stuckY) > 4) { stuckX = b.x; stuckY = b.y; stuckT = 0; }
     else if ((stuckT += dt) > 4) { b.vx = (Math.random() - 0.5) * 500; b.vy = -350; stuckT = 0; say('*kicks the cabinet*', 1.2); }
@@ -567,6 +682,9 @@ function renderFlat(f) {
   c.fillText('C H E E S E   M O O N', mx(84), 176);
   c.fillText('B U B B L E', 316, 384); c.fillText('F E E D', 50, 384);
   c.fillText('M O O   L A N E', 186, 372);
+  // shadows cast by the overhead ramps
+  c.strokeStyle = 'rgba(0,0,0,0.26)'; c.lineWidth = 18; c.lineCap = 'butt'; c.lineJoin = 'round';
+  for (const r of rails) { c.beginPath(); r.pts.forEach((p, i) => i ? c.lineTo(p[0] + p[2] * 0.2, p[1] + p[2] * 0.45) : c.moveTo(p[0], p[1])); c.stroke(); }
   // soft contact shadows under the rails
   c.strokeStyle = 'rgba(0,0,0,0.45)'; c.lineWidth = 7; c.lineJoin = 'round'; c.shadowColor = 'rgba(0,0,0,0.6)'; c.shadowBlur = 6 * f;
   for (let i = 1; i < polys.length; i++) { tracePoly(c, polys[i]); c.stroke(); }
@@ -615,6 +733,58 @@ function renderBg() {
   }
   c.setTransform(kd, 0, 0, kd, 0, 0);
   for (const s of wallOrder) wallQuad(c, s, s.h, s.face, s.sling != null ? C.hot : C.rail, 2.6, 7 * kd);
+  renderRamps();
+}
+
+/* ---------- drawing: ramps (a static overlay that sits above the playfield) ---------- */
+const fg = document.createElement('canvas');
+function edgePts(r, s0, s1, off, dz) {
+  const out = [];
+  for (let s = s0; ; s += 5) { if (s > s1) s = s1; railAt(r, s); pr(RA.x - RA.ty * off, RA.y + RA.tx * off, RA.z + dz); out.push(PX, PY); if (s >= s1) break; }
+  return out;
+}
+function strokePts(c, p) { c.beginPath(); c.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) c.lineTo(p[i], p[i + 1]); c.stroke(); }
+function fillBetween(c, p, q) {
+  c.beginPath(); c.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) c.lineTo(p[i], p[i + 1]);
+  for (let i = q.length - 2; i >= 0; i -= 2) c.lineTo(q[i], q[i + 1]); c.closePath(); c.fill();
+}
+function hoop(c, r, s) {
+  railAt(r, s); const x = RA.x, y = RA.y, z = RA.z, nx = -RA.ty, ny = RA.tx;
+  c.beginPath();
+  for (let i = 0; i <= 8; i++) { const a = i * Math.PI / 8; pr(x + nx * Math.cos(a) * 10, y + ny * Math.cos(a) * 10, z + Math.sin(a) * 18); if (i) c.lineTo(PX, PY); else c.moveTo(PX, PY); }
+  c.strokeStyle = 'rgba(0,0,0,0.45)'; c.lineWidth = 2.6; c.stroke();
+  c.strokeStyle = '#dfe6ff'; c.lineWidth = 1.3; c.stroke();
+}
+function renderRamps() {
+  fg.width = cv.width; fg.height = cv.height;
+  const c = fg.getContext('2d'), kd = scale * dpr;
+  c.setTransform(kd, 0, 0, kd, 0, 0); c.lineCap = 'round'; c.lineJoin = 'round';
+  for (const r of rails) {
+    const hue = r.id ? 275 : 332;
+    // stilts
+    for (let s = r.crest; s < r.total - 20; s += 60) {
+      railAt(r, s); pr(RA.x, RA.y, RA.z); const tx = PX, ty = PY; pr(RA.x, RA.y, 0);
+      c.strokeStyle = 'rgba(0,0,0,0.5)'; c.lineWidth = 3; c.beginPath(); c.moveTo(tx, ty); c.lineTo(PX, PY); c.stroke();
+      c.strokeStyle = '#9aa3d6'; c.lineWidth = 1.4; c.stroke();
+      c.fillStyle = '#9aa3d6'; c.beginPath(); c.ellipse(PX, PY, 3, 2, 0, 0, 6.283); c.fill();
+    }
+    // the moulded climb: floor plus two side walls
+    const L0 = edgePts(r, 0, r.crest, 13, 0), R0 = edgePts(r, 0, r.crest, -13, 0), L1 = edgePts(r, 0, r.crest, 13, 9), R1 = edgePts(r, 0, r.crest, -13, 9);
+    c.fillStyle = 'hsla(' + hue + ',90%,62%,0.42)'; fillBetween(c, L0, R0);
+    c.fillStyle = 'hsla(' + hue + ',90%,45%,0.55)'; fillBetween(c, L0, L1); fillBetween(c, R0, R1);
+    c.strokeStyle = 'hsl(' + hue + ',100%,80%)'; c.lineWidth = 1.6; strokePts(c, L1); strokePts(c, R1);
+    c.strokeStyle = 'hsla(' + hue + ',100%,85%,0.7)'; c.lineWidth = 1;
+    for (let s = 8; s < r.crest; s += 12) { railAt(r, s); const x = RA.x, y = RA.y, z = RA.z, nx = -RA.ty, ny = RA.tx; c.beginPath(); pr(x + nx * 13, y + ny * 13, z); c.moveTo(PX, PY); pr(x - nx * 13, y - ny * 13, z); c.lineTo(PX, PY); c.stroke(); }
+    // the cage: two wire rails with hoops over the top
+    for (const off of [9, -9]) {
+      const w = edgePts(r, r.crest, r.total, off, 0);
+      c.strokeStyle = 'rgba(0,0,0,0.5)'; c.lineWidth = 3.4; strokePts(c, w);
+      c.strokeStyle = '#eef1ff'; c.lineWidth = 1.7; strokePts(c, w);
+    }
+    const spine = edgePts(r, r.crest, r.total - 6, 0, 18);
+    c.strokeStyle = 'rgba(0,0,0,0.45)'; c.lineWidth = 2.6; strokePts(c, spine); c.strokeStyle = '#dfe6ff'; c.lineWidth = 1.3; strokePts(c, spine);
+    for (const s of r.hoops) hoop(c, r, s);
+  }
 }
 
 /* ---------- drawing: live layer ---------- */
@@ -718,9 +888,9 @@ function drawSaucer() {
 }
 function drawBall() {
   const b = ball;
-  if (b.z < 1) { flatBegin(b.x, b.y); ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.arc(3, 3, BR * 1.05, 0, 6.283); ctx.fill(); ctx.restore(); }
+  if (!(b.held > 0)) { flatBegin(b.x, b.y); ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.arc(3, 3, BR * 1.05, 0, 6.283); ctx.fill(); ctx.restore(); }
   pr(b.x, b.y, BR + b.z);
-  const r = BR * PK * 1.1 * (1 - b.z / 90), g = ctx.createRadialGradient(PX - r * 0.35, PY - r * 0.4, r * 0.05, PX, PY, r);
+  const r = BR * PK * 1.1 * (b.held > 0 ? 1 - b.z / 90 : 1), g = ctx.createRadialGradient(PX - r * 0.35, PY - r * 0.4, r * 0.05, PX, PY, r);
   g.addColorStop(0, '#ffffff'); g.addColorStop(0.4, '#cfd8ee'); g.addColorStop(1, '#3f4868');
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(PX, PY, r, 0, 6.283); ctx.fill();
 }
@@ -745,7 +915,9 @@ function draw() {
   if (beacon.flash > 0) flatLamp(beacon.x, beacon.y, 15, true, RGB.lamp);
   for (let i = 0; i < 8; i++) flatLamp(376, 640 - i * 16, 3, charge > i / 8 && charge > 0, RGB.hot);
   const sv = saveT > 0 && (saveT > 3 || Math.sin(clock * 16) > 0);
-  flatLamp(186, 690, 8, sv, RGB.rail);
+  flatLamp(186, 676, 8, sv, RGB.rail);
+  flatLamp(25, 632, 7, kick && !attract, RGB.green);
+  for (const r of rails) for (let i = 0; i < 3; i++) flatLamp(r.mouth, 424 + i * 13, 3.5, !attract && Math.floor(clock * 5) % 3 === 2 - i, r.id ? RGB.rail : RGB.hot);
   // the ball inspector's face
   flatBegin(FACE.x, FACE.y);
   const blink = (clock % 4.3) < 0.12;
@@ -777,7 +949,7 @@ function draw() {
     const s = { x1: 367, y1: 686 + charge * 16, x2: 385, y2: 686 + charge * 16 };
     wallQuad(ctx, s, 12, '#6d74a8', C.ink, 3, 0);
   }]);
-  if (ball && !(ball.held > 0)) {
+  if (ball && !(ball.held > 0) && !ball.rail) {
     const b = ball;
     drawList.push([b.y, () => {
       const n = trail.length / 2;
@@ -795,6 +967,14 @@ function draw() {
   }
   drawList.sort((a, b) => a[0] - b[0]);
   for (const d of drawList) d[1]();
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(fg, 0, 0); ctx.setTransform(kd, 0, 0, kd, 0, 0);
+  if (ball && ball.rail) {
+    const r = ball.rail.r, s = ball.rail.s;
+    drawBall();
+    if (s > r.crest) for (const off of [9, -9]) { const w = edgePts(r, Math.max(r.crest, s - 14), Math.min(r.total, s + 14), off, 0); ctx.strokeStyle = '#eef1ff'; ctx.lineWidth = 1.7; strokePts(ctx, w); }
+    for (const hs of r.hoops) if (Math.abs(hs - s) < 24) hoop(ctx, r, hs);
+  }
 
   for (const s of sparks) { pr(s.x, s.y, 14); ctx.globalAlpha = Math.min(1, s.life * 3); ctx.fillStyle = s.color; ctx.fillRect(PX - 1.4, PY - 1.4, 2.8, 2.8); }
   ctx.globalAlpha = 1;
@@ -834,7 +1014,7 @@ function syncPointers() {
   let L = false, R = false;
   for (const s of pointers.values()) { if (s === 'L') L = true; else R = true; }
   input.L = L; input.R = R;
-  setFlip(0, L || keys.L); setFlip(1, R || keys.R);
+  setFlip(0, (L || keys.L) && !tilt); setFlip(1, (R || keys.R) && !tilt);
 }
 addEventListener('pointerdown', e => {
   if (e.target.closest && e.target.closest('button')) return;
@@ -854,12 +1034,14 @@ function key(e, down) {
   else if (k === ' ' || k === 'ArrowDown') {
     if (down && state !== 'play' && !e.repeat && document.activeElement !== $('go')) { initAudio(); newGame(); }
     else input.launch = down;
-  } else return;
+  } else if (k === 'ArrowUp' || k === 'x' || k === 'X') { if (down && !e.repeat) nudge(); }
+  else return;
   if (down) initAudio();
   e.preventDefault(); syncPointers();
 }
 addEventListener('keydown', e => key(e, true)); addEventListener('keyup', e => key(e, false));
 $('go').addEventListener('click', () => { initAudio(); newGame(); });
+$('nudge').addEventListener('click', () => { initAudio(); nudge(); });
 $('sound').addEventListener('click', () => {
   soundOn = !soundOn; $('sound').setAttribute('aria-pressed', String(soundOn));
   $('sound').textContent = soundOn ? 'Sound' : 'Muted'; if (soundOn) initAudio();
